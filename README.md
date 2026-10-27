@@ -5,9 +5,16 @@ This SDK enables seamless integration of SimplePay's payment services into your 
 
 ## Features
 - Easy integration with minimal setup
-- Support for card payments, more payment methods coming soon
-- Full accessibility support including font scaling and display size scaling
 - 3DS two-factor authentication
+- Environment-aware security checks (device integrity checks enforced only in production)
+- Various payment methods:
+  - Bank Card (card payments)
+  - Simple Wallet (saved cards, Simple App payment)
+  - Qvik Transfer (through banking app, QR payment)
+  - Google Pay
+- Adaptive layouts, with landscape and foldable device support
+- Full accessibility support including TalkBack descriptions, text and display size scaling
+- Dark mode
 
 ## Architecture & Design
 
@@ -21,7 +28,7 @@ The SDK is built following industry best practices:
 
 This architecture ensures the SDK is scalable, maintainable, and follows Android development best practices.
 
-## Requirements
+## SDK Requirements
 
 - **Minimum SDK**: 24 (Android 7.0)
 - **Target SDK**: 36 (Android 16.0)
@@ -29,6 +36,10 @@ This architecture ensures the SDK is scalable, maintainable, and follows Android
 - Kotlin 2.0.21+
 - Android Gradle Plugin 8.1+
 - KSP for annotation processing (if using libraries like Room, Hilt, etc.)
+- OkHttp 4.12.0+/Ktor 3.0+ (required by the SDK's underlying Ktor HTTP client engine). If your application requires compatibility with an older OkHttp/Ktor version, please contact the SimplePay support team.
+
+Note: Koin is used internally by the SDK, which handles Koin initialization itself. 
+If your application already uses Koin, the SDK will attach to the existing Koin context when the `SimplePaySdk.init()` is called.
 
 ### KAPT Compatibility
 
@@ -52,7 +63,7 @@ See [Android KSP Migration Guide](https://developer.android.com/build/migrate-to
 
 ### 1. Add SDK Dependency
 
-Add the dependency to your app's `build.gradle.kts` (replace `<version>` with the latest version from [releases](https://github.com/otpm-green/simplepay-android-sdk/releases)):
+Add the dependency to your app's `build.gradle.kts` (replace `<version>` with the latest version from [Maven Central](https://central.sonatype.com/artifact/com.simplepay/simplepay-android-sdk)):
 
 ```kotlin
 dependencies {
@@ -62,24 +73,32 @@ dependencies {
 
 ### 2. Initialize the SDK
 
-Initialize the SDK in your `Application` class with the base URL you receive to access SimplePay API:
+Initialize the SDK in your `Application` class or from your `MainActivity` with the target SimplePay environment:
+Note: This initialization should only happen once, and it requires app-level `Context`, so it should be done from your base Activity or Application class.
 
 ```kotlin
 class YourApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        
+
         SimplePaySdk.init(
             context = this,
-            baseUrl = "https://your-simplepay-api-url.com/"
+            environment = SimplePayEnvironment.PROD
         )
     }
 }
 ```
 
-Important: Replace ```https://your-simplepay-api-url.com/``` with an actual SimplePay API base URL provided by SimplePay. You will be able to access different environments (development, test, production) by setting their provided base URLs before initialization.
+Important: `SimplePayEnvironment` lets you select which SimplePay backend the SDK connects to. The SDK supports two environments:
 
-Update your `AndroidManifest.xml` to use your custom Application class:
+| Environment | Use case                              |
+|:------------|:--------------------------------------|
+| `SANDBOX`   | Integration testing (no real charges) |
+| `PROD`      | Live production payments              |
+
+Note: Extra device security checks (root/tamper/emulator detection) are only enforced in the `PROD` environment, so you can freely test and debug your integration in `SANDBOX` without those checks blocking your flow.
+
+If you added the initialization with a new Application class, update your `AndroidManifest.xml` to set it with the class name:
 
 ```xml
 <application
@@ -115,11 +134,12 @@ class MainActivity : ComponentActivity() {
         
         Button(
             onClick = {
-                // Create a payment intent with the payment path or URL from your backend
+                // Create a payment intent with the payment path and UUID from the SimplePay API start response
                 val intent = SimplePaySdk.getInstance()
                     .createPaymentIntent(
                         context = this,
-                        paymentPath = "your-payment-path-from-backend"
+                        paymentPath = "your-payment-path-from-backend",
+                        paymentUuid = "uuid-hash-from-backend"
                     )
 
                 if (intent != null) {
@@ -161,11 +181,12 @@ class MainActivity : AppCompatActivity() {
         }
         
         findViewById<Button>(R.id.startPaymentButton).setOnClickListener {
-            // Create a payment intent with the payment path or URL from your backend
+            // Create a payment intent with the payment path and UUID from the SimplePay API start response
             val intent = SimplePaySdk.getInstance()
                 .createPaymentIntent(
                     context = this,
-                    paymentPath = "your-payment-path-from-backend"
+                    paymentPath = "your-payment-path-from-backend",
+                    paymentUuid = "uuid-hash-from-backend"
                 )
             if (intent != null) {
                 paymentLauncher.launch(intent)
@@ -182,8 +203,8 @@ class MainActivity : AppCompatActivity() {
 
 The SDK returns two pieces of information:
 
-- **`resultCode`**: `RESULT_OK` for successful payments, or a SimplePay error code for failures
-- **`transactionId`**: Unique identifier for the transaction (accessible via `SimplePaySdk.TRANSACTION_ID` extra)
+- **`resultCode`**: `RESULT_OK` (code 0) for successful payments, or a SimplePay error code for failures
+- **`transactionId`**: Unique identifier for the transaction (accessible via `SimplePaySdk.TRANSACTION_ID` extra - may be null for certain transaction loading issues)
 
 Extract these values from the `ActivityResult`:
 
@@ -191,6 +212,25 @@ Extract these values from the `ActivityResult`:
 val resultCode = activityResult.resultCode
 val transactionId = activityResult.data?.getStringExtra(SimplePaySdk.TRANSACTION_ID)
 ```
+
+### 5. Error Codes
+
+| Code        |                Meaning                 |
+|:------------|:--------------------------------------:|
+| 5016        |  Timeout — payment session timed out   |
+| 5017        |     Transaction cancelled by user      |
+| 5026        | Transaction forbidden (possible fraud) |
+| 5011        |     Invalid payment path provided      |
+| 5554 / 5555 |     Session initialization failure     |
+| 1099        |         Internal server error          |
+| 5000        |          Generic remote error          |
+| 5813        |      Payment rejected by gateway       |
+| 2030        |  Incorrect amount/Insufficient funds   |
+| 2071        |      Card number rejected by bank      |
+| 2072        |      Card expiry rejected by bank      |
+| 2074        |   Card holder name rejected by bank    |
+| 3012        |       3DS authentication failure       |
+| 3501        |         3DS cancelled by user          |
 
 ## Support
 
